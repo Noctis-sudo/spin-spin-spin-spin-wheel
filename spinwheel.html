@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>彩色抽选转盘</title>
+<style>
+  :root { --size: min(76vw, 76vh, 680px); }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; padding: 24px;
+    font-family: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    color: #202331; background: radial-gradient(circle at top, #f5f7ff, #e9ecf7 65%, #dfe4f2);
+    display: flex; justify-content: center; align-items: center;
+  }
+  .app { width: min(1180px, 100%); display: grid; grid-template-columns: minmax(300px, 1fr) minmax(270px, 350px); gap: 30px; align-items: center; }
+  .wheel-panel { display:flex; flex-direction:column; align-items:center; gap:20px; min-width:0; }
+  .wheel-wrap {
+    position:relative; width:var(--size); height:var(--size); max-width:100%; aspect-ratio:1;
+    filter: drop-shadow(0 16px 25px #26304a2b);
+    cursor:pointer; -webkit-tap-highlight-color:transparent;
+  }
+  .wheel-wrap:focus-visible { outline:3px solid #8178fa; outline-offset:6px; border-radius:50%; }
+  canvas { display:block; width:100%; height:100%; }
+  .pointer {
+    position:absolute; z-index:3; left:50%; top:-5px; transform:translateX(-50%);
+    width:0;height:0;border-left:19px solid transparent;border-right:19px solid transparent;
+    border-top:43px solid #24283b; filter:drop-shadow(0 3px 2px #0003);
+  }
+  .hub {
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    width:13%; aspect-ratio:1; border-radius:50%; border:5px solid #fff;
+    background:linear-gradient(145deg,#30364f,#121522); box-shadow:0 3px 12px #0004; pointer-events:none;
+  }
+  .main-button {
+    border:0; border-radius:999px; padding:15px 48px; min-width:210px;
+    color:white; font-size:20px; font-weight:800; letter-spacing:2px; cursor:pointer;
+    background:linear-gradient(135deg,#7167f8,#5144dc); box-shadow:0 8px 20px #6457e044;
+    transition:transform .15s, opacity .2s;
+  }
+  .main-button:hover { transform:translateY(-2px); }
+  .main-button:active { transform:translateY(1px); }
+  .main-button:disabled { opacity:.65; cursor:wait; }
+  .side {
+    background:#ffffffd9; border:1px solid #fff; border-radius:24px; padding:24px;
+    box-shadow:0 12px 40px #28334d12; backdrop-filter:blur(12px);
+  }
+  h1 { font-size:25px; margin:0 0 8px; }
+  .sub { color:#777d91; font-size:13px; margin:0 0 18px; line-height:1.6; }
+  label { display:block; font-weight:750; margin-bottom:8px; }
+  textarea {
+    width:100%; min-height:220px; resize:vertical; border:1px solid #dfe2ed; border-radius:13px;
+    padding:13px; font:15px/1.8 inherit; font-family:inherit; outline:none; background:#fbfcff;
+  }
+  textarea:focus { border-color:#8178fa; box-shadow:0 0 0 3px #8178fa20; }
+  .row { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:12px 0 14px; color:#6c7184; font-size:13px; }
+  .count { background:#f0efff; color:#6256e8; border-radius:999px; padding:5px 10px; font-weight:750; white-space:nowrap; }
+  .secondary {
+    border:1px solid #e0e3ee; background:#fff; color:#3b4054; border-radius:10px;
+    padding:10px 13px; cursor:pointer; font-weight:650; font-family:inherit; font-size:13px;
+    transition:background .15s, transform .15s;
+  }
+  .secondary:hover { background:#f5f6fc; }
+  .secondary:active { transform:translateY(1px); }
+  .btn-row { display:flex; gap:10px; }
+  .btn-row .secondary { flex:1; }
+  .result { margin-top:18px; padding:15px; background:#f6f5ff; border:1px solid #e8e5ff; border-radius:14px; }
+  .result-title { color:#77758e; font-size:12px; font-weight:750; letter-spacing:1px; }
+  .winner { min-height:35px; margin-top:5px; font-size:23px; font-weight:850; overflow-wrap:anywhere; color:#5144dc; }
+  .hint { margin-top:12px; color:#85899a; font-size:12px; line-height:1.6; }
+
+  /* ===== 全屏退出小按钮（只在全屏模式显示） ===== */
+  .fs-exit {
+    display:none; position:fixed; top:16px; right:18px; z-index:99;
+    width:42px; height:42px; border-radius:50%; border:0;
+    background:#ffffffee; color:#4a4f66; font-size:17px; line-height:1; cursor:pointer;
+    box-shadow:0 4px 14px #0000001f; opacity:.28; transition:opacity .2s, transform .15s;
+    align-items:center; justify-content:center;
+  }
+  .fs-exit:hover, .fs-exit:focus-visible { opacity:1; }
+  .fs-exit:active { transform:scale(.94); }
+
+  /* ===== 全屏模式：屏幕里只有转盘 ===== */
+  body.fullscreen-mode {
+    --size: min(96vw, 96vh);
+    padding:0; overflow:hidden;
+  }
+  body.fullscreen-mode .app {
+    grid-template-columns: 1fr;
+    width:100vw; height:100vh; gap:0;
+  }
+  body.fullscreen-mode .side,
+  body.fullscreen-mode .main-button { display:none; }
+  body.fullscreen-mode .wheel-panel { gap:0; }
+  body.fullscreen-mode .fs-exit { display:flex; }
+
+  @media (max-width:800px) {
+    body { padding:18px 12px; align-items:flex-start; }
+    .app { grid-template-columns:1fr; gap:22px; }
+    :root { --size:min(88vw, 55vh, 560px); }
+    .side { padding:20px; }
+    textarea { min-height:150px; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <main class="wheel-panel">
+    <div class="wheel-wrap" id="wheelWrap" tabindex="0" role="button" aria-label="点击转盘开始或停止">
+      <div class="pointer" aria-hidden="true"></div>
+      <canvas id="wheel" aria-label="抽选转盘"></canvas>
+      <div class="hub"></div>
+    </div>
+    <button class="main-button" id="spinButton">开始</button>
+  </main>
+
+  <aside class="side">
+    <h1>🎯 彩色抽选转盘</h1>
+    <p class="sub">每行一个选项。增加一行，转盘就自动多一块；所有扇区始终等大、颜色各不相同。</p>
+    <label for="options">转盘选项</label>
+    <textarea id="options" spellcheck="false">选项 A
+选项 B
+选项 C
+选项 D
+选项 E
+选项 F</textarea>
+    <div class="row">
+      <span>修改内容后会自动更新转盘</span>
+      <span class="count" id="count">6 个选项</span>
+    </div>
+    <div class="btn-row">
+      <button class="secondary" id="shuffleColors">🎨 重新配色</button>
+      <button class="secondary" id="fullscreenBtn">⛶ 全屏模式</button>
+    </div>
+    <div class="result">
+      <div class="result-title">本次抽中</div>
+      <div class="winner" id="winner">等待开始</div>
+    </div>
+    <div class="hint">点击转盘任意位置或下方按钮开始；转动中再次点击即可停止。启动会逐渐加速，停止时缓慢减速，最后一段非常慢。停止位置随机，可能刚好贴近两个选项的分界线。</div>
+  </aside>
+</div>
+
+<button class="fs-exit" id="fsExit" title="退出全屏（Esc）">✕</button>
+
+<script>
+(() => {
+  const canvas = document.getElementById('wheel');
+  const ctx = canvas.getContext('2d');
+  const textarea = document.getElementById('options');
+  const button = document.getElementById('spinButton');
+  const countEl = document.getElementById('count');
+  const winnerEl = document.getElementById('winner');
+  const wheelWrap = document.getElementById('wheelWrap');
+  const fsExit = document.getElementById('fsExit');
+  const fullscreenBtn = document.getElementById('fullscreenBtn');
+  const TAU = Math.PI * 2;
+  const palette = [
+    '#F94144','#F3722C','#F9C74F','#90BE6D','#43AA8B','#4D908E',
+    '#577590','#277DA1','#7B61FF','#B565D9','#F15BB5','#FF8FAB',
+    '#00B4D8','#80ED99','#C77DFF','#FF9F1C','#6C9A8B','#E76F51',
+    '#A8DADC','#457B9D','#D4A5A5','#8D99AE','#BC6C25','#6D597A'
+  ];
+  let colors = [], items = [], rotation = 0, phase = 'idle';
+  let raf = 0, lastTime = 0, startTime = 0, startRotation = 0, targetRotation = 0;
+  let stopRequested = false;
+
+  function resizeCanvas() {
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.max(1, Math.round(rect.width * dpr));
+    canvas.height = Math.max(1, Math.round(rect.height * dpr));
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    draw();
+  }
+
+  function getItems() {
+    return textarea.value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  }
+
+  function setItems() {
+    if (phase !== 'idle') return;
+    items = getItems();
+    if (!items.length) items = ['请添加选项'];
+    colors = items.map((_, i) => colors[i] || palette[i % palette.length]);
+    countEl.textContent = `${items.length} 个选项`;
+    winnerEl.textContent = '等待开始';
+    draw();
+  }
+
+  function shuffleColors() {
+    colors = items.map(() => `hsl(${Math.floor(Math.random()*360)} 76% ${48 + Math.floor(Math.random()*9)}%)`);
+    draw();
+  }
+
+  function draw() {
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    if (!w || !h) return;
+    const cx = w/2, cy = h/2, r = Math.min(w,h)/2 - 8;
+    ctx.clearRect(0,0,w,h);
+    const n = items.length || 1, slice = TAU/n;
+    for (let i=0;i<n;i++) {
+      const a0 = rotation - Math.PI/2 + i*slice;
+      const a1 = a0 + slice;
+      ctx.beginPath(); ctx.moveTo(cx,cy); ctx.arc(cx,cy,r,a0,a1); ctx.closePath();
+      ctx.fillStyle = colors[i] || palette[i % palette.length]; ctx.fill();
+      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = Math.max(2, w/250); ctx.stroke();
+
+      ctx.save();
+      const mid = a0 + slice/2;
+      ctx.translate(cx + Math.cos(mid)*r*0.64, cy + Math.sin(mid)*r*0.64);
+      ctx.rotate(mid + Math.PI/2);
+      const fontSize = Math.max(10, Math.min(22, 210/n + 4, w*0.045));
+      ctx.font = `800 ${fontSize}px system-ui, sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.lineWidth = 3.5; ctx.strokeStyle = 'rgba(0,0,0,.23)';
+      const label = items[i].length > 16 ? items[i].slice(0,15)+'…' : items[i];
+      ctx.strokeText(label, 0, 0, r*0.48);
+      ctx.fillStyle = '#fff'; ctx.fillText(label, 0, 0, r*0.48);
+      ctx.restore();
+    }
+    ctx.beginPath(); ctx.arc(cx,cy,r,0,TAU); ctx.lineWidth=5; ctx.strokeStyle='#fff'; ctx.stroke();
+  }
+
+  function easeInCubic(t) { return t*t*t; }
+  function easeOutQuint(t) { return 1 - Math.pow(1-t, 5); }
+
+  function animate(now) {
+    if (!lastTime) lastTime = now;
+    const dt = Math.min((now-lastTime)/1000, .05);
+    lastTime = now;
+    if (phase === 'accelerating') {
+      const t = Math.min((now-startTime)/1500, 1);
+      const ramp = easeInCubic(t);
+      rotation += dt * (0.5 + ramp * 15.5);
+      if (t >= 1) phase = 'spinning';
+    } else if (phase === 'spinning') {
+      rotation += dt * 16;
+    } else if (phase === 'decelerating') {
+      const t = Math.min((now-startTime)/targetDuration, 1);
+      rotation = startRotation + (targetRotation-startRotation) * easeOutQuint(t);
+      if (t >= 1) {
+        rotation = targetRotation % TAU;
+        phase = 'idle';
+        button.disabled = false;
+        button.textContent = '再转一次';
+        stopRequested = false;
+        showWinner();
+        draw();
+        cancelAnimationFrame(raf);
+        raf = 0;
+        return;
+      }
+    }
+    draw();
+    raf = requestAnimationFrame(animate);
+  }
+
+  let targetDuration = 8000;
+  function startSpin() {
+    if (phase !== 'idle') return;
+    if (!getItems().length) { winnerEl.textContent = '请先添加选项'; return; }
+    setItems();
+    phase = 'accelerating';
+    stopRequested = false;
+    button.textContent = '停止';
+    winnerEl.textContent = '转盘转动中…';
+    lastTime = 0; startTime = performance.now();
+    raf = requestAnimationFrame(animate);
+  }
+
+  function stopSpin() {
+    if (phase === 'idle' || phase === 'decelerating') return;
+    phase = 'decelerating';
+    startTime = performance.now();
+    startRotation = rotation;
+    const n = items.length, slice = TAU/n;
+    // 指针在正上方（-PI/2）。随机选一个扇区和一个位置，
+    // 有较大概率贴近分界线，让最终结果“擦着”分界线停下。
+    const chosen = Math.floor(Math.random()*n);
+    const nearBoundary = Math.random() < 0.42;
+    const offset = nearBoundary
+      ? (Math.random() < .5 ? 0.008 : slice - 0.008)
+      : slice * (0.12 + Math.random()*0.76);
+    const desiredRotation = ((TAU - (chosen*slice + offset)) % TAU);
+    const currentMod = ((rotation % TAU) + TAU) % TAU;
+    let delta = (desiredRotation - currentMod + TAU) % TAU;
+    delta += TAU * (5 + Math.floor(Math.random()*3));
+    targetRotation = rotation + delta;
+    // 五段缓出，最后一段几乎是爬行到停止
+    targetDuration = 10500 + Math.random()*3500;
+    button.textContent = '减速停止中…';
+    button.disabled = true;
+  }
+
+  function showWinner() {
+    const n = items.length, slice = TAU/n;
+    const a = ((Math.PI*1.5 - rotation) % TAU + TAU) % TAU;
+    const idx = Math.floor(a / slice) % n;
+    winnerEl.textContent = items[idx] || '完成';
+  }
+
+  // ===== 统一的开 / 停入口 =====
+  function handleToggle() {
+    if (phase === 'idle') startSpin();
+    else if (phase !== 'decelerating') stopSpin();
+  }
+
+  button.addEventListener('click', handleToggle);
+  wheelWrap.addEventListener('click', handleToggle);
+  wheelWrap.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+      e.preventDefault();
+      handleToggle();
+    }
+  });
+
+  textarea.addEventListener('input', () => {
+    if (phase === 'idle') setItems();
+  });
+  document.getElementById('shuffleColors').addEventListener('click', shuffleColors);
+  window.addEventListener('resize', resizeCanvas);
+
+  // ===== 全屏模式 =====
+  let pseudoFs = false;               // 浏览器不支持真全屏时的兜底
+  const isFs = () => !!document.fullscreenElement || !!document.webkitFullscreenElement || pseudoFs;
+
+  function updateFsClass() {
+    document.body.classList.toggle('fullscreen-mode', isFs());
+    requestAnimationFrame(resizeCanvas);
+  }
+
+  function enterFullscreen() {
+    pseudoFs = true;                  // 先切布局，避免闪烁
+    updateFsClass();
+    const el = document.documentElement;
+    if (el.requestFullscreen) {
+      el.requestFullscreen().catch(() => {});
+    } else if (el.webkitRequestFullscreen) {
+      el.webkitRequestFullscreen();
+    }
+  }
+
+  function exitFullscreen() {
+    pseudoFs = false;
+    if (document.fullscreenElement && document.exitFullscreen) {
+      document.exitFullscreen().catch(() => {});
+    } else if (document.webkitFullscreenElement && document.webkitExitFullscreen) {
+      document.webkitExitFullscreen();
+    }
+    updateFsClass();
+  }
+
+  fullscreenBtn.addEventListener('click', () => {
+    if (isFs()) exitFullscreen(); else enterFullscreen();
+  });
+  fsExit.addEventListener('click', exitFullscreen);
+
+  document.addEventListener('fullscreenchange', () => {
+    if (!document.fullscreenElement) pseudoFs = false;
+    updateFsClass();
+  });
+  document.addEventListener('webkitfullscreenchange', () => {
+    if (!document.webkitFullscreenElement) pseudoFs = false;
+    updateFsClass();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && isFs()) exitFullscreen();
+  });
+
+  // 尺寸变化（含全屏切换）自动重绘，防抖处理
+  if (window.ResizeObserver) {
+    let roRaf = 0;
+    new ResizeObserver(() => {
+      cancelAnimationFrame(roRaf);
+      roRaf = requestAnimationFrame(resizeCanvas);
+    }).observe(wheelWrap);
+  }
+
+  items = getItems();
+  colors = items.map((_, i) => palette[i % palette.length]);
+  resizeCanvas();
+  setItems();
+})();
+</script>
+</body>
+</html>
