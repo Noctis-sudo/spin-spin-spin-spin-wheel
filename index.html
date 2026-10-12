@@ -32,6 +32,17 @@
     width:13%; aspect-ratio:1; border-radius:50%; border:5px solid #fff;
     background:linear-gradient(145deg,#30364f,#121522); box-shadow:0 3px 12px #0004; pointer-events:none;
   }
+  /* ===== 全屏模式下的转盘结果浮层（非全屏时隐藏） ===== */
+  .fs-result {
+    display:none; position:absolute; left:50%; top:50%;
+    transform:translate(-50%, 23vmin);
+    max-width:80%; padding:.34em 1em; border-radius:999px;
+    background:rgba(24,28,44,.74); color:#fff;
+    font-size:clamp(18px, 5vmin, 52px); font-weight:850; letter-spacing:1px;
+    text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    box-shadow:0 10px 28px #00000033; backdrop-filter:blur(6px);
+    pointer-events:none; z-index:4;
+  }
   .main-button {
     border:0; border-radius:999px; padding:15px 48px; min-width:210px;
     color:white; font-size:20px; font-weight:800; letter-spacing:2px; cursor:pointer;
@@ -93,6 +104,7 @@
   body.fullscreen-mode .main-button { display:none; }
   body.fullscreen-mode .wheel-panel { gap:0; }
   body.fullscreen-mode .fs-exit { display:flex; }
+  body.fullscreen-mode .fs-result { display:block; }
 
   @media (max-width:800px) {
     body { padding:18px 12px; align-items:flex-start; }
@@ -110,6 +122,7 @@
       <div class="pointer" aria-hidden="true"></div>
       <canvas id="wheel" aria-label="抽选转盘"></canvas>
       <div class="hub"></div>
+      <div class="fs-result" id="fsResult" aria-live="polite">等待开始</div>
     </div>
     <button class="main-button" id="spinButton">开始</button>
   </main>
@@ -119,11 +132,10 @@
     <p class="sub">输入就完事了</p>
     <label for="options">转盘选项</label>
     <textarea id="options" spellcheck="false">雪
-      雨
-      爱
-      秋
-      还有一个我忘了
-    </textarea>
+秋
+爱
+天
+雨</textarea>
     <div class="row">
       <span class="count" id="count">5 个选项</span>
     </div>
@@ -135,7 +147,7 @@
       <div class="result-title">本次抽中</div>
       <div class="winner" id="winner">等待开始</div>
     </div>
-    <div class="hint">点击转盘任意位置或下方按钮开始；转动中再次点击即可停止。启动会逐渐加速，停止时缓慢减速，最后一段非常慢。停止位置随机，可能刚好贴近两个选项的分界线。</div>
+    <div class="hint">别看了 直接暴力点暴力抽</div>
   </aside>
 </div>
 
@@ -149,6 +161,7 @@
   const button = document.getElementById('spinButton');
   const countEl = document.getElementById('count');
   const winnerEl = document.getElementById('winner');
+  const fsResult = document.getElementById('fsResult');
   const wheelWrap = document.getElementById('wheelWrap');
   const fsExit = document.getElementById('fsExit');
   const fullscreenBtn = document.getElementById('fullscreenBtn');
@@ -159,9 +172,47 @@
     '#00B4D8','#80ED99','#C77DFF','#FF9F1C','#6C9A8B','#E76F51',
     '#A8DADC','#457B9D','#D4A5A5','#8D99AE','#BC6C25','#6D597A'
   ];
+  // 预设选项的固定底色
+  const NAME_COLORS = {
+    '雪': '#FFFFFF',   // 白
+    '秋': '#F59E0B',   // 橙
+    '爱': '#F472B6',   // 粉
+    '天': '#93C5FD',   // 淡蓝
+    '雨': '#1E40AF'    // 深蓝
+  };
   let colors = [], items = [], rotation = 0, phase = 'idle';
   let raf = 0, lastTime = 0, startTime = 0, startRotation = 0, targetRotation = 0;
   let stopRequested = false;
+
+  // 结果文本同时写入侧栏与全屏浮层
+  function setWinnerText(t) {
+    winnerEl.textContent = t;
+    fsResult.textContent = t;
+  }
+
+  // 判断底色是否偏亮（决定文字用深色还是白色）
+  function isLightColor(c) {
+    if (!c) return false;
+    let r, g, b;
+    if (c[0] === '#') {
+      let hex = c.slice(1);
+      if (hex.length === 3) hex = hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
+      r = parseInt(hex.slice(0,2),16);
+      g = parseInt(hex.slice(2,4),16);
+      b = parseInt(hex.slice(4,6),16);
+    } else {
+      const m = c.match(/hsl\(\s*([\d.]+)\s*[, ]\s*([\d.]+)%\s*[, ]\s*([\d.]+)%/i);
+      if (!m) return false;
+      const h = +m[1], s = +m[2]/100, l = +m[3]/100;
+      const a = s * Math.min(l, 1-l);
+      const f = n => {
+        const k = (n + h/30) % 12;
+        return l - a * Math.max(-1, Math.min(k-3, 9-k, 1));
+      };
+      r = Math.round(f(0)*255); g = Math.round(f(8)*255); b = Math.round(f(4)*255);
+    }
+    return (0.299*r + 0.587*g + 0.114*b) > 150;
+  }
 
   function resizeCanvas() {
     const rect = canvas.getBoundingClientRect();
@@ -180,14 +231,19 @@
     if (phase !== 'idle') return;
     items = getItems();
     if (!items.length) items = ['请添加选项'];
-    colors = items.map((_, i) => colors[i] || palette[i % palette.length]);
+    colors = items.map((name, i) =>
+      NAME_COLORS[name] || colors[i] || palette[i % palette.length]
+    );
     countEl.textContent = `${items.length} 个选项`;
-    winnerEl.textContent = '等待开始';
+    setWinnerText('等待开始');
     draw();
   }
 
   function shuffleColors() {
-    colors = items.map(() => `hsl(${Math.floor(Math.random()*360)} 76% ${48 + Math.floor(Math.random()*9)}%)`);
+    // 预设选项保持固定底色，其余随机
+    colors = items.map((name, i) =>
+      NAME_COLORS[name] || `hsl(${Math.floor(Math.random()*360)} 76% ${48 + Math.floor(Math.random()*9)}%)`
+    );
     draw();
   }
 
@@ -200,8 +256,10 @@
     for (let i=0;i<n;i++) {
       const a0 = rotation - Math.PI/2 + i*slice;
       const a1 = a0 + slice;
+      const bg = colors[i] || palette[i % palette.length];
+
       ctx.beginPath(); ctx.moveTo(cx,cy); ctx.arc(cx,cy,r,a0,a1); ctx.closePath();
-      ctx.fillStyle = colors[i] || palette[i % palette.length]; ctx.fill();
+      ctx.fillStyle = bg; ctx.fill();
       ctx.strokeStyle = '#ffffff'; ctx.lineWidth = Math.max(2, w/250); ctx.stroke();
 
       ctx.save();
@@ -211,10 +269,13 @@
       const fontSize = Math.max(10, Math.min(22, 210/n + 4, w*0.045));
       ctx.font = `800 ${fontSize}px system-ui, sans-serif`;
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.lineWidth = 3.5; ctx.strokeStyle = 'rgba(0,0,0,.23)';
+      const light = isLightColor(bg);
+      ctx.lineWidth = 3.5;
+      ctx.strokeStyle = light ? 'rgba(255,255,255,.85)' : 'rgba(0,0,0,.23)';
       const label = items[i].length > 16 ? items[i].slice(0,15)+'…' : items[i];
       ctx.strokeText(label, 0, 0, r*0.48);
-      ctx.fillStyle = '#fff'; ctx.fillText(label, 0, 0, r*0.48);
+      ctx.fillStyle = light ? '#242a3d' : '#fff';
+      ctx.fillText(label, 0, 0, r*0.48);
       ctx.restore();
     }
     ctx.beginPath(); ctx.arc(cx,cy,r,0,TAU); ctx.lineWidth=5; ctx.strokeStyle='#fff'; ctx.stroke();
@@ -257,12 +318,12 @@
   let targetDuration = 8000;
   function startSpin() {
     if (phase !== 'idle') return;
-    if (!getItems().length) { winnerEl.textContent = '请先添加选项'; return; }
+    if (!getItems().length) { setWinnerText('请先添加选项'); return; }
     setItems();
     phase = 'accelerating';
     stopRequested = false;
     button.textContent = '停止';
-    winnerEl.textContent = '转盘转动中…';
+    setWinnerText('转盘转动中…');
     lastTime = 0; startTime = performance.now();
     raf = requestAnimationFrame(animate);
   }
@@ -293,9 +354,12 @@
 
   function showWinner() {
     const n = items.length, slice = TAU/n;
-    const a = ((Math.PI*1.5 - rotation) % TAU + TAU) % TAU;
+    // 指针固定在正上方（画布角度 -π/2）。
+    // 扇区 i 覆盖 [rotation - π/2 + i*slice, ...)，
+    // 故指针落入扇区 i 需满足 i*slice ≡ -rotation (mod 2π)。
+    const a = (((-rotation) % TAU) + TAU) % TAU;
     const idx = Math.floor(a / slice) % n;
-    winnerEl.textContent = items[idx] || '完成';
+    setWinnerText(items[idx] || '完成');
   }
 
   // ===== 统一的开 / 停入口 =====
@@ -376,7 +440,7 @@
   }
 
   items = getItems();
-  colors = items.map((_, i) => palette[i % palette.length]);
+  colors = items.map((name, i) => NAME_COLORS[name] || palette[i % palette.length]);
   resizeCanvas();
   setItems();
 })();
